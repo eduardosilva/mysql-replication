@@ -1,0 +1,67 @@
+x-base: &base
+  environment: 
+    MYSQL_ROOT_PASSWORD: root
+    MYSQL_DATABASE: bugs
+    MYSQL_USER: bugs
+    MYSQL_PASSWORD: bugs
+    MASTER_HOST: mysql-master 
+    MASTER_PORT: 3306
+    SLAVE_HOST: mysql-slave
+    SLAVE_PORT: 3306
+  networks:
+    - mysql_network
+  healthcheck:
+    interval: 30s
+    timeout: 10s
+    retries: 5
+    start_period: 10s
+
+x-mysql-base: &mysql-base
+  <<: *base
+  image: mysql:8.0
+
+
+services:
+  master:
+    <<: *mysql-base
+    container_name: mysql-master
+    volumes:
+      - ./master/my.cnf:/etc/mysql/my.cnf
+      - ./master/master-init.sql:/docker-entrypoint-initdb.d/master-init.sql
+    ports:
+      - "3306:3306"
+    healthcheck:
+      test: >
+        mysql -uroot -p$$MYSQL_ROOT_PASSWORD -e "SHOW MASTER STATUS \G" | grep File || exit 1
+
+  slave:
+    <<: *mysql-base
+    container_name: mysql-slave
+    ports:
+      - "3307:3306"
+    volumes:
+      - ./slave/my.cnf:/etc/mysql/my.cnf
+      - ./slave/slave-init.sh:/docker-entrypoint-initdb.d/slave-init.sh
+    depends_on:
+      master:
+        condition: service_healthy
+    healthcheck:
+      test: >
+        mysql -uroot -p$$MYSQL_ROOT_PASSWORD -e "SHOW SLAVE STATUS\G" | grep "Slave_IO_Running: Yes" || exit 1
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 10s
+
+  data-gen:
+    <<: *base
+    build: ./data-gen
+    container_name: data-generator
+    # entrypoint: /bin/sh -c "sleep infinity"
+    depends_on:
+      slave:
+        condition: service_healthy
+
+networks:
+  mysql_network:
+    driver: bridge
